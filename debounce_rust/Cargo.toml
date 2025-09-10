@@ -1,0 +1,9 @@
+[package]
+name = "debounce_rust"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arduino-hal = { git = "https://github.com/Rahix/avr-hal.git", package = "arduino-hal", features = ["arduino-nano"] }
+panic-halt = "0.2"  # For panic handler on AVR
+ufmt = "0.1"        # For minimal formatting (optional)
