@@ -38,4 +38,4 @@ be dual licensed as above, without any additional terms or conditions.
 Please see the arduino side of things for the acctuall requirments.
 This is just a port.
 
-You can find the arduino code: [here](README#Debouncer)
+You can find the arduino code: [here](debounce/README.md)
