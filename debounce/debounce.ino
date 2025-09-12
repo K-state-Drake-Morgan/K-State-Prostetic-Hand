@@ -69,7 +69,7 @@ bool is_high(Debouncer debouncer) {
       }
       return false;
     case PossibleHigh:
-      if (current_input == HIGH && can_change(debouncer.change, CHANGE_STATE_INTERVAL)) { 
+      if (current_input == HIGH && can_change(debouncer.change, CHANGE_STATE_INTERVAL)) {
         debouncer.state = High;
         debouncer.change = default_change_able();
         return true;
@@ -116,7 +116,7 @@ bool can_change(ChangeAble c, unsigned long interval_milli_seconds) {
       c.can_change = true;
       return true;
     }
-    
+
   } else if (current_time - c.last_time >= interval_milli_seconds) {
     c.can_change = true;
     return true;
