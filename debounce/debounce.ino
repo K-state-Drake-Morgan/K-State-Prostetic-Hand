@@ -3,6 +3,7 @@
 
 const unsigned long MAX_UNSIGNED_LONG = 4294967295UL;
 const unsigned long CHANGE_STATE_INTERVAL = 250; // 0.25 of a second to register should change
+const int HIGH_THREASHOLD = 500;                                                
 
 // Enums and Structs
 
@@ -53,14 +54,17 @@ Debouncer new_debouncer(uint8_t pin) {
 /// Returns true if High or Possible Low and updates the timeline base on the State
 /// We only need to use the can_change for the Possible states because that allows more control
 /// over when to stop the state
-bool is_high(Debouncer debouncer) {
-  // currently I'm just using high's and lows assuming that we are getting a single voltage from the
-  // pin and allowing the arduino to determin if it is high or low,
-  // notablly this dosn't use a refrence pin so...
-  // once I learn how the inputs acctually work I will
-  // create a function to better handle dobounceing from the refrence pin
-  // to remove noise
-  int current_input = digitalRead(debouncer.pin);
+bool is_high(Debouncer debouncer, uint8_t refrence_pin) {
+  int current_input = analogRead(debouncer.pin);
+  int reffrence_input = analogRead(refrence_pin);
+  // use better noise removing funciton later
+  int diff = abs(current_input - reffrence_input);
+  if (diff > HIGH_THREASHOLD) {
+    current_input = HIGH;
+  } else {
+    current_input = LOW;
+  }
+
   switch (debouncer.state) {
     case Low:
       if (current_input == HIGH) { // the current reading is high
@@ -125,7 +129,7 @@ bool can_change(ChangeAble c, unsigned long interval_milli_seconds) {
   return false;
 }
 
-// Pins
+// Pins (Reading from EMG's incase anyone reading this forgot)
 
 uint8_t refrence_pin = 0; // temp value for now
 uint8_t bend_pin = 1;     // temp value for now
@@ -144,6 +148,6 @@ void setup() {
 }
 
 void loop() {
-  bool finger_should_bend = is_high(bend_pin_debouncer);
-  bool finger_should_extend = is_high(unbend_pin_debouncer);
+  bool finger_should_bend = is_high(bend_pin_debouncer, refrence_pin);
+  bool finger_should_extend = is_high(unbend_pin_debouncer, refrence_pin);
 }

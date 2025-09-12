@@ -192,6 +192,7 @@ fn main() -> ! {
     // Enable interrupts globally
     unsafe { avr_device::interrupt::enable() }; // only use millis after this line!
 
+    // The pins needed are analog pins for the EMG which should be on a0-2
     let mut bend_debouncer = Debouncer::new(pins.d2.into_pull_up_input()); // example pins
     let mut unbend_debouncer = Debouncer::new(pins.d3.into_pull_up_input());
 
