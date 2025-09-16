@@ -3,7 +3,7 @@
 
 const unsigned long MAX_UNSIGNED_LONG = 4294967295UL;
 const unsigned long CHANGE_STATE_INTERVAL = 250; // 0.25 of a second to register should change
-const int HIGH_THREASHOLD = 500;                                                
+const int HIGH_THREASHOLD = 500;
 
 // Enums and Structs
 
@@ -54,12 +54,11 @@ Debouncer new_debouncer(uint8_t pin) {
 /// Returns true if High or Possible Low and updates the timeline base on the State
 /// We only need to use the can_change for the Possible states because that allows more control
 /// over when to stop the state
-bool is_high(Debouncer debouncer, uint8_t refrence_pin) {
+bool is_high(Debouncer debouncer) {
   int current_input = analogRead(debouncer.pin);
-  int reffrence_input = analogRead(refrence_pin);
-  // use better noise removing funciton later
-  int diff = abs(current_input - reffrence_input);
-  if (diff > HIGH_THREASHOLD) {
+  Serial.print(current_input);
+  Serial.print(",");
+  if (current_input > 155) {
     current_input = HIGH;
   } else {
     current_input = LOW;
@@ -99,7 +98,7 @@ bool is_high(Debouncer debouncer, uint8_t refrence_pin) {
       }
       return true;
   }
-  printf("%i] got to unreachable area in is signal high!");
+  printf("%i] got to unreachable area and isn't signal high!");
   return false; // something really bad happened if we go here!
 }
 
@@ -131,9 +130,9 @@ bool can_change(ChangeAble c, unsigned long interval_milli_seconds) {
 
 // Pins (Reading from EMG's incase anyone reading this forgot)
 
-uint8_t refrence_pin = 0; // temp value for now
-uint8_t bend_pin = 1;     // temp value for now
-uint8_t unbend_pin = 2;   // temp value for now
+uint8_t refrence_pin = 14; // temp value for now
+uint8_t bend_pin = 17;     // temp value for now
+uint8_t unbend_pin = 16;   // temp value for now
 
 // debouncers based on the pins
 Debouncer bend_pin_debouncer = new_debouncer(bend_pin);
@@ -142,12 +141,22 @@ Debouncer unbend_pin_debouncer = new_debouncer(unbend_pin);
 // Setup & Loop
 
 void setup() {
-  pinMode(refrence_pin, OUTPUT);
-  pinMode(bend_pin, OUTPUT);
-  pinMode(unbend_pin, OUTPUT);
+  pinMode(refrence_pin, INPUT);
+  pinMode(bend_pin, INPUT);
+  pinMode(unbend_pin, INPUT);
+
+  // for testing
+  pinMode(13, OUTPUT);
+  Serial.begin(9600);
 }
 
 void loop() {
-  bool finger_should_bend = is_high(bend_pin_debouncer, refrence_pin);
-  bool finger_should_extend = is_high(unbend_pin_debouncer, refrence_pin);
+  bool finger_should_bend = is_high(bend_pin_debouncer);
+  Serial.println(finger_should_bend);
+  // bool finger_should_extend = is_high(unbend_pin_debouncer);
+  if (finger_should_bend) {
+    digitalWrite(13, HIGH);
+  } else {
+    digitalWrite(13, LOW);
+  }
 }

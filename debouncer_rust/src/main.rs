@@ -2,122 +2,95 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
+use arduino_hal::pac::tc0::TCNT0;
 use arduino_hal::{port::Pin, prelude::*};
 use core::cell;
+use core::ops::{Add, Div, Mul, Sub};
+use core::panic::PanicInfo;
 use embedded_hal::digital::InputPin;
-use panic_halt as _;
+use num_traits::one;
+use num_traits::SaturatingMul;
+use num_traits::SaturatingSub;
+// use panic_halt as _;
 
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    let dp = arduino_hal::Peripherals::take().unwrap();
+    let pins = arduino_hal::pins!(dp);
+    let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
 
-#[derive(Debug)]
-enum ChangeAble {
-    CanChange,
-    Waiting { start_time: u32 },
+    // Write panic message ASAP
+    let _ = ufmt::uwriteln!(&mut serial, "Panic!");
+
+    loop {}
 }
 
-impl ChangeAble {
-    fn default() -> Self {
-        ChangeAble::Waiting {
-            start_time: millis(),
-        }
+// ================== Tseting =====================
+/// This is a simulator for when we don't have an EMG to test with, it uses random walks to get a seemingly resable graph for and EMG
+struct EmgSimulator {
+    val: i16,
+    decay: u8,
+}
+
+impl EmgSimulator {
+    pub fn new() -> Self {
+        Self { val: 512, decay: 0 }
     }
 
-    fn can_change(&self, interval: u32) -> bool {
-        match self {
-            ChangeAble::CanChange => true,
-            ChangeAble::Waiting { start_time } => {
-                let now = millis();
-                let elapsed = now.wrapping_sub(*start_time);
-                elapsed >= interval
+    pub fn next(&mut self, noise: u16) -> u16 {
+        if noise == 0 {
+            self.val += 500;
+            self.decay = 10;
+        } else {
+            // max step by this meathod is 7 units, but also everything between -7 and 7
+            if noise > u16::MAX / 2 {
+                self.val = self.val.saturating_add_unsigned(noise & 111);
+            } else {
+                self.val = self.val.saturating_sub_unsigned(noise & 111);
             }
         }
-    }
-}
 
-#[derive(Debug, Default)]
-enum DebounceState {
-    #[default]
-    Low,
-    PossibleHigh(ChangeAble),
-    High,
-    PossibleLow(ChangeAble),
-}
-
-impl DebounceState {
-    pub fn update(&mut self, high: bool) {
-        *self = match core::mem::replace(self, DebounceState::Low) {
-            DebounceState::Low => {
-                if high {
-                    DebounceState::PossibleHigh(ChangeAble::default())
-                } else {
-                    DebounceState::Low
-                }
+        // this should make a random spike imedently go down sometimes
+        if self.decay > 0 {
+            if noise % 7 != 0 {
+                self.decay -= 1;
+                self.val = self.val.saturating_sub_unsigned(50);
+            } else {
+                self.val = self.val.saturating_sub_unsigned(50 * self.decay);
+                self.decay = 0;
             }
-            DebounceState::PossibleHigh(change) => {
-                if high {
-                    if change.can_change(250) {
-                        DebounceState::High
-                    } else {
-                        DebounceState::PossibleHigh(change)
-                    }
-                } else {
-                    DebounceState::Low
-                }
-            }
-            DebounceState::High => {
-                if !high {
-                    DebounceState::PossibleLow(ChangeAble::default())
-                } else {
-                    DebounceState::High
-                }
-            }
-            DebounceState::PossibleLow(change) => {
-                if !high {
-                    if change.can_change(250) {
-                        DebounceState::Low
-                    } else {
-                        DebounceState::PossibleLow(change)
-                    }
-                } else {
-                    DebounceState::High
-                }
-            }
-        };
-    }
-
-    pub fn is_high(&self) -> bool {
-        matches!(self, DebounceState::High | DebounceState::PossibleLow(_))
-    }
-}
-
-struct Debouncer<PIN>
-where
-    PIN: InputPin,
-{
-    state: DebounceState,
-    pin: PIN,
-}
-
-impl<PIN> Debouncer<PIN>
-where
-    PIN: InputPin,
-{
-    pub fn new(pin: PIN) -> Self {
-        Self {
-            state: DebounceState::default(),
-            pin,
         }
-    }
 
-    pub fn is_high(&mut self) -> bool {
-        let pin_high = self.pin.is_high().unwrap_or(false);
-        self.state.update(pin_high);
-        self.state.is_high()
+        // Clamp to 0..=1023 and cast to u16 safely
+        self.val = self.val.clamp(0, 1023);
+        self.val as u16
     }
 }
+
+/// A very bad random number generator that works with no_std
+pub struct LcgRng {
+    state: u32,
+}
+
+impl LcgRng {
+    pub fn new(seed: u32) -> Self {
+        Self { state: seed }
+    }
+
+    pub fn next_u32(&mut self) -> u32 {
+        self.state = self.state.wrapping_mul(1664525).wrapping_add(1013904223);
+        self.state
+    }
+
+    pub fn rand_bounded_u32(&mut self, bound: u32) -> u32 {
+        self.next_u32() % bound
+    }
+}
+// ------------------------------------------------
 
 // ================== Millis() ====================
 //
-/*!
+/**
  * A basic implementation of the `millis()` function from Arduino:
  *
  *     https://www.arduino.cc/reference/en/language/functions/time/millis/
@@ -181,31 +154,69 @@ fn millis() -> u32 {
 
 // ----------------------------------------------------------------------------
 
+// A rolling average for data over time
+pub struct ExponentialMovingAverage {
+    pub ema: f32,
+    pub alpha: f32,
+}
+
+impl ExponentialMovingAverage {
+    pub fn update(&mut self, input: u16) -> u16 {
+        let input_f32: f32 = input as f32;
+        self.ema = (input_f32 * self.alpha) + (self.ema * (1.0 - self.alpha));
+        return self.ema as u16;
+    }
+
+    pub fn new(alpha: f32) -> ExponentialMovingAverage {
+        ExponentialMovingAverage {
+            ema: 0.0,
+            alpha: alpha,
+        }
+    }
+}
+
 #[arduino_hal::entry]
 fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
     let pins = arduino_hal::pins!(dp);
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
+    let a0 = pins.a0.into_analog_input(dp.ADC);
 
+    // setup millis
     millis_init(dp.TC0);
 
     // Enable interrupts globally
-    unsafe { avr_device::interrupt::enable() }; // only use millis after this line!
+    unsafe { avr_device::interrupt::enable() };
+    // the millis function is now avable
 
-    // The pins needed are analog pins for the EMG which should be on a0-2
-    let mut bend_debouncer = Debouncer::new(pins.d2.into_pull_up_input()); // example pins
-    let mut unbend_debouncer = Debouncer::new(pins.d3.into_pull_up_input());
+    // ========================== Testing ===================================
+    let mut rng = LcgRng::new(42);
+    let mut emg_sim = EmgSimulator::new();
+    let mut ema = ExponentialMovingAverage::new(0.25); // alpha is 0.25 with the scaler
+
+    let mut start_time = millis();
+    let mut next_time = start_time.wrapping_add(10);
+    // ======================== Testing: End ================================
 
     loop {
-        let should_bend = bend_debouncer.is_high();
-        let should_unbend = unbend_debouncer.is_high();
-
-        if should_bend {
-            // do something
+        if millis() < next_time {
+            continue;
         }
 
-        if should_unbend {
-            // do something else
-        }
+        // use rng for testing and read for functional
+        let input = rng.rand_bounded_u32(1023) as u16;
+        // let input = a0.analog_read(dp.ADC);
+
+        let raw = emg_sim.next(input);
+        let smoothed = ema.update(raw.clone());
+
+        ufmt::uwriteln!(&mut serial, "{}, {}", raw, smoothed).unwrap();
+
+        // from looking at the code provided in EMG_HAND_CM.ino (TEAMS GENERAL)
+        // it seems that the servo rotates between 0 and 90
+        // so we need a function that takes balues from 0 to 1023
+        // to be from 0 to 90 for the hand to function
+
+        next_time = millis().wrapping_add(10);
     }
 }
