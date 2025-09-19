@@ -2,68 +2,110 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-use arduino_hal::pac::tc0::TCNT0;
-use arduino_hal::{port::Pin, prelude::*};
-use core::cell;
-use core::ops::{Add, Div, Mul, Sub};
-use core::panic::PanicInfo;
-use embedded_hal::digital::InputPin;
-use num_traits::one;
-use num_traits::SaturatingMul;
-use num_traits::SaturatingSub;
-// use panic_halt as _;
+use arduino_hal::delay_ms;
+use arduino_hal::port::mode::Output;
+use arduino_hal::port::Pin;
+use arduino_hal::port::PinOps;
 
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    let dp = arduino_hal::Peripherals::take().unwrap();
-    let pins = arduino_hal::pins!(dp);
-    let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
+// #[panic_handler]
+// fn panic(info: &core::panic::PanicInfo) -> ! {
+//     let dp = match arduino_hal::Peripherals::take() {
+//         Some(p) => p,
+//         None => unsafe { Peripherals::steal() },
+//     };
+//     let pins = arduino_hal::pins!(dp);
+//     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
+//
+//     if let Some(location) = info.location() {
+//         let _ = ufmt::uwriteln!(
+//             &mut serial,
+//             "Panic at {}:{}:{}",
+//             location.file(),
+//             location.line(),
+//             location.column()
+//         );
+//     }
+//
+//     let _ = info.message().as_str().is_some_and(|msg| {
+//         let _ = ufmt::uwriteln!(&mut serial, "{}", msg);
+//         true
+//     });
+//
+//     loop {}
+// }
 
-    // Write panic message ASAP
-    let _ = ufmt::uwriteln!(&mut serial, "Panic!");
+use panic_halt as _;
 
-    loop {}
+// ================== Testing =====================
+/// This is a simulator for when we don't have an EMG to test with, it uses random walks to get a seemingly resable graph for and EMG
+
+pub enum EmgState {
+    Relaxed,
+    Intermediate,
+    Clenched,
 }
 
-// ================== Tseting =====================
-/// This is a simulator for when we don't have an EMG to test with, it uses random walks to get a seemingly resable graph for and EMG
-struct EmgSimulator {
-    val: i16,
-    decay: u8,
+pub struct EmgSimulator {
+    step_count: u32,
+    state: EmgState,
+    phase: u16,
+    spike_remaining: u8, // Counts how many steps left in spike
 }
 
 impl EmgSimulator {
     pub fn new() -> Self {
-        Self { val: 512, decay: 0 }
+        Self {
+            step_count: 0,
+            state: EmgState::Relaxed,
+            phase: 0,
+            spike_remaining: 0,
+        }
     }
 
     pub fn next(&mut self, noise: u16) -> u16 {
-        if noise == 0 {
-            self.val += 500;
-            self.decay = 10;
-        } else {
-            // max step by this meathod is 7 units, but also everything between -7 and 7
-            if noise > u16::MAX / 2 {
-                self.val = self.val.saturating_add_unsigned(noise & 111);
+        self.step_count = self.step_count.wrapping_add(1);
+        self.phase = self.phase.wrapping_add(17);
+
+        // Change state every 1000 samples based on noise
+        if self.step_count % 1000 == 0 {
+            let r = noise % 100;
+            self.state = if r < 50 {
+                EmgState::Relaxed
+            } else if r < 80 {
+                EmgState::Intermediate
             } else {
-                self.val = self.val.saturating_sub_unsigned(noise & 111);
-            }
+                EmgState::Clenched
+            };
         }
 
-        // this should make a random spike imedently go down sometimes
-        if self.decay > 0 {
-            if noise % 7 != 0 {
-                self.decay -= 1;
-                self.val = self.val.saturating_sub_unsigned(50);
-            } else {
-                self.val = self.val.saturating_sub_unsigned(50 * self.decay);
-                self.decay = 0;
-            }
+        // Trigger spike if none active and noise meets condition
+        if self.spike_remaining == 0 && (noise % 200 == 0) {
+            // spike length pseudo-random from 1 to 5 inclusive
+            self.spike_remaining = (noise % 5 + 1) as u8;
         }
 
-        // Clamp to 0..=1023 and cast to u16 safely
-        self.val = self.val.clamp(0, 1023);
-        self.val as u16
+        // If in spike, output max value and decrement spike timer
+        if self.spike_remaining > 0 {
+            self.spike_remaining -= 1;
+            return 1023;
+        }
+
+        // Normal signal calculation
+        let (baseline, amplitude): (u16, u16) = match self.state {
+            EmgState::Relaxed => (200, 50),
+            EmgState::Intermediate => (620, 30),
+            EmgState::Clenched => (940, 10),
+        };
+
+        let jitter = ((noise % (2 * amplitude)) as i16) - (amplitude as i16);
+
+        let artifact = if (self.phase % 256) < 128 { 3 } else { -3 };
+
+        let mut signal = baseline as i16 + jitter + artifact;
+
+        signal = signal.clamp(0, 1023);
+
+        signal as u16
     }
 }
 
@@ -78,7 +120,13 @@ impl LcgRng {
     }
 
     pub fn next_u32(&mut self) -> u32 {
-        self.state = self.state.wrapping_mul(1664525).wrapping_add(1013904223);
+        // Use a mix of wrapping mul, add, xor and shifts to scramble bits
+        self.state = self.state.wrapping_mul(0x6C8E9CF5);
+        self.state ^= self.state >> 13;
+        self.state = self.state.wrapping_add(0xB5297A4D);
+        self.state ^= self.state << 17;
+        self.state = self.state.wrapping_sub(0xD6E8FEB8);
+        self.state ^= self.state >> 5;
         self.state
     }
 
@@ -86,93 +134,55 @@ impl LcgRng {
         self.next_u32() % bound
     }
 }
-// ------------------------------------------------
 
-// ================== Millis() ====================
-//
-/**
- * A basic implementation of the `millis()` function from Arduino:
- *
- *     https://www.arduino.cc/reference/en/language/functions/time/millis/
- *
- * Uses timer TC0 and one of its interrupts to update a global millisecond
- * counter.  A walkthough of this code is available here:
- *
- *     https://blog.rahix.de/005-avr-hal-millis/
- */
-// Possible Values:
-//
-// ╔═══════════╦══════════════╦═══════════════════╗
-// ║ PRESCALER ║ TIMER_COUNTS ║ Overflow Interval ║
-// ╠═══════════╬══════════════╬═══════════════════╣
-// ║        64 ║          250 ║              1 ms ║
-// ║       256 ║          125 ║              2 ms ║
-// ║       256 ║          250 ║              4 ms ║
-// ║      1024 ║          125 ║              8 ms ║
-// ║      1024 ║          250 ║             16 ms ║
-// ╚═══════════╩══════════════╩═══════════════════╝
-const PRESCALER: u32 = 1024;
-const TIMER_COUNTS: u32 = 125;
-
-const MILLIS_INCREMENT: u32 = PRESCALER * TIMER_COUNTS / 16000;
-
-static MILLIS_COUNTER: avr_device::interrupt::Mutex<cell::Cell<u32>> =
-    avr_device::interrupt::Mutex::new(cell::Cell::new(0));
-
-fn millis_init(tc0: arduino_hal::pac::TC0) {
-    // Configure the timer for the above interval (in CTC mode)
-    // and enable its interrupt.
-    tc0.tccr0a.write(|w| w.wgm0().ctc());
-    tc0.ocr0a.write(|w| w.bits(TIMER_COUNTS as u8));
-    tc0.tccr0b.write(|w| match PRESCALER {
-        8 => w.cs0().prescale_8(),
-        64 => w.cs0().prescale_64(),
-        256 => w.cs0().prescale_256(),
-        1024 => w.cs0().prescale_1024(),
-        _ => panic!(),
-    });
-    tc0.timsk0.write(|w| w.ocie0a().set_bit());
-
-    // Reset the global millisecond counter
-    avr_device::interrupt::free(|cs| {
-        MILLIS_COUNTER.borrow(cs).set(0);
-    });
-}
-
-#[avr_device::interrupt(atmega328p)]
-fn TIMER0_COMPA() {
-    avr_device::interrupt::free(|cs| {
-        let counter_cell = MILLIS_COUNTER.borrow(cs);
-        let counter = counter_cell.get();
-        counter_cell.set(counter + MILLIS_INCREMENT);
-    })
-}
-
-fn millis() -> u32 {
-    avr_device::interrupt::free(|cs| MILLIS_COUNTER.borrow(cs).get())
-}
-
-// ----------------------------------------------------------------------------
-
-// A rolling average for data over time
+/// A rolling average for data over time
 pub struct ExponentialMovingAverage {
+    /// Stores the last value from the data
     pub ema: f32,
+    /// How much the newest value effects the value.
+    /// A lower alpha means a slower responce time.
+    /// But a higher alpha has the ema follow the data more closly
     pub alpha: f32,
+    last_input: f32,
 }
 
 impl ExponentialMovingAverage {
+    /// update the value from new data
     pub fn update(&mut self, input: u16) -> u16 {
-        let input_f32: f32 = input as f32;
-        self.ema = (input_f32 * self.alpha) + (self.ema * (1.0 - self.alpha));
-        return self.ema as u16;
+        let input_f32 = input as f32;
+        let max_slope = (self.last_input - self.ema).abs();
+
+        let go_to = self.alpha * input_f32 + (1.0 - self.alpha) * self.ema;
+        let slope = go_to - self.ema;
+        self.ema = self.ema + slope.clamp(-max_slope, max_slope);
+
+        self.last_input = input_f32;
+
+        self.ema as u16
     }
 
     pub fn new(alpha: f32) -> ExponentialMovingAverage {
         ExponentialMovingAverage {
             ema: 0.0,
             alpha: alpha,
+            last_input: 0.0,
         }
     }
+}
+
+pub fn fron_1023_to_90(number: u16) -> u16 {
+    ((number as u32).saturating_mul(90) / 1023) as u16
+}
+
+fn write_servo_angle<PD3>(pin: &mut Pin<Output, PD3>, angle: u16)
+where
+    PD3: PinOps,
+{
+    let pulse_width_us = 1000 + ((angle as u32 * 1000) / 90); // maps 0-90 to 1000-2000us
+    pin.set_high();
+    arduino_hal::delay_us(pulse_width_us as u32);
+    pin.set_low();
+    arduino_hal::delay_ms(20 - (pulse_width_us / 1000) as u32); // rest of 20ms period
 }
 
 #[arduino_hal::entry]
@@ -180,43 +190,44 @@ fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
     let pins = arduino_hal::pins!(dp);
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
-    let a0 = pins.a0.into_analog_input(dp.ADC);
-
-    // setup millis
-    millis_init(dp.TC0);
-
-    // Enable interrupts globally
-    unsafe { avr_device::interrupt::enable() };
-    // the millis function is now avable
+    let mut servo_pin = pins.d3.into_output(); // or use D3 instead
 
     // ========================== Testing ===================================
     let mut rng = LcgRng::new(42);
     let mut emg_sim = EmgSimulator::new();
-    let mut ema = ExponentialMovingAverage::new(0.25); // alpha is 0.25 with the scaler
-
-    let mut start_time = millis();
-    let mut next_time = start_time.wrapping_add(10);
     // ======================== Testing: End ================================
 
-    loop {
-        if millis() < next_time {
-            continue;
-        }
+    let mut ema = ExponentialMovingAverage::new(0.15); // the alpha
+                                                       // effects how much the new value is used
 
+    // set the angle to 0 for callibration for 5 seconds
+    for _ in 0..=90 {
+        write_servo_angle(&mut servo_pin, 0);
+        delay_ms(55);
+    }
+
+    loop {
         // use rng for testing and read for functional
         let input = rng.rand_bounded_u32(1023) as u16;
-        // let input = a0.analog_read(dp.ADC);
+        // let input = a0.analog_read(adc);
 
         let raw = emg_sim.next(input);
         let smoothed = ema.update(raw.clone());
-
-        ufmt::uwriteln!(&mut serial, "{}, {}", raw, smoothed).unwrap();
 
         // from looking at the code provided in EMG_HAND_CM.ino (TEAMS GENERAL)
         // it seems that the servo rotates between 0 and 90
         // so we need a function that takes balues from 0 to 1023
         // to be from 0 to 90 for the hand to function
+        let motor_out = fron_1023_to_90(smoothed);
 
-        next_time = millis().wrapping_add(10);
+        write_servo_angle(&mut servo_pin, motor_out);
+
+        let _ = ufmt::uwriteln!(
+            &mut serial,
+            "raw:{}, smoothed:{}, motor:{}",
+            raw,
+            smoothed,
+            motor_out
+        );
     }
 }
