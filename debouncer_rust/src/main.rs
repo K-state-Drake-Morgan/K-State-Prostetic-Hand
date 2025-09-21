@@ -3,9 +3,8 @@
 #![feature(abi_avr_interrupt)]
 
 use arduino_hal::delay_ms;
-use arduino_hal::port::mode::Output;
+use arduino_hal::port::mode::PwmOutput;
 use arduino_hal::port::Pin;
-use arduino_hal::port::PinOps;
 
 // #[panic_handler]
 // fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -34,6 +33,8 @@ use arduino_hal::port::PinOps;
 //     loop {}
 // }
 
+use arduino_hal::simple_pwm::IntoPwmPin;
+use arduino_hal::simple_pwm::Timer2Pwm;
 use panic_halt as _;
 
 // ================== Testing =====================
@@ -170,19 +171,23 @@ impl ExponentialMovingAverage {
     }
 }
 
-pub fn fron_1023_to_90(number: u16) -> u16 {
-    ((number as u32).saturating_mul(90) / 1023) as u16
+pub fn fron_1023_to_90(number: u16) -> u8 {
+    ((number as u32).saturating_mul(90) / 1023) as u8
 }
 
-fn write_servo_angle<PD3>(pin: &mut Pin<Output, PD3>, angle: u16)
-where
-    PD3: PinOps,
-{
-    let pulse_width_us = 1000 + ((angle as u32 * 1000) / 90); // maps 0-90 to 1000-2000us
-    pin.set_high();
-    arduino_hal::delay_us(pulse_width_us as u32);
-    pin.set_low();
-    arduino_hal::delay_ms(20 - (pulse_width_us / 1000) as u32); // rest of 20ms period
+struct Servo {
+    pin: Pin<PwmOutput<Timer2Pwm>, arduino_hal::hal::port::PD3>,
+}
+
+impl Servo {
+    pub fn new(pin: Pin<PwmOutput<Timer2Pwm>, arduino_hal::hal::port::PD3>) -> Servo {
+        Servo { pin }
+    }
+
+    pub fn set_angle(&mut self, angle: u8) {
+        // let duty = 23 + ((angle as u32 * (31 - 23)) / 90) as u8;
+        self.pin.set_duty(angle);
+    }
 }
 
 #[arduino_hal::entry]
@@ -190,7 +195,9 @@ fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
     let pins = arduino_hal::pins!(dp);
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
-    let mut servo_pin = pins.d3.into_output(); // or use D3 instead
+
+    let mut timer = Timer2Pwm::new(dp.TC2, arduino_hal::simple_pwm::Prescaler::Prescale1024);
+    let mut servo_pin = pins.d3.into_output().into_pwm(&mut timer); // or use D3 instead
 
     // ========================== Testing ===================================
     let mut rng = LcgRng::new(42);
@@ -200,34 +207,44 @@ fn main() -> ! {
     let mut ema = ExponentialMovingAverage::new(0.15); // the alpha
                                                        // effects how much the new value is used
 
+    servo_pin.enable();
+    let mut s = Servo::new(servo_pin);
+
     // set the angle to 0 for callibration for 5 seconds
     for _ in 0..=90 {
-        write_servo_angle(&mut servo_pin, 0);
+        s.set_angle(0);
         delay_ms(55);
     }
 
+    let mut u8_value = 0;
+
     loop {
-        // use rng for testing and read for functional
-        let input = rng.rand_bounded_u32(1023) as u16;
-        // let input = a0.analog_read(adc);
+        s.set_angle(u8_value);
+        delay_ms(500);
+        let _ = ufmt::uwriteln!(&mut serial, "u8_value:{}", u8_value);
+        u8_value = u8_value.wrapping_add(1);
 
-        let raw = emg_sim.next(input);
-        let smoothed = ema.update(raw.clone());
+        // // use rng for testing and read for functional
+        // let input = rng.rand_bounded_u32(1023) as u16;
+        // // let input = a0.analog_read(adc);
 
-        // from looking at the code provided in EMG_HAND_CM.ino (TEAMS GENERAL)
-        // it seems that the servo rotates between 0 and 90
-        // so we need a function that takes balues from 0 to 1023
-        // to be from 0 to 90 for the hand to function
-        let motor_out = fron_1023_to_90(smoothed);
+        // let raw = emg_sim.next(input);
+        // let smoothed = ema.update(raw.clone());
 
-        write_servo_angle(&mut servo_pin, motor_out);
+        // // from looking at the code provided in EMG_HAND_CM.ino (TEAMS GENERAL)
+        // // it seems that the servo rotates between 0 and 90
+        // // so we need a function that takes balues from 0 to 1023
+        // // to be from 0 to 90 for the hand to function
+        // let motor_out = fron_1023_to_90(smoothed);
 
-        let _ = ufmt::uwriteln!(
-            &mut serial,
-            "raw:{}, smoothed:{}, motor:{}",
-            raw,
-            smoothed,
-            motor_out
-        );
+        // s.set_angle(motor_out);
+
+        // let _ = ufmt::uwriteln!(
+        //     &mut serial,
+        //     "raw:{}, smoothed:{}, motor:{}",
+        //     raw,
+        //     smoothed,
+        //     motor_out
+        // );
     }
 }

@@ -1,162 +1,179 @@
-// currently useing the Rust style guides found:
+// currently useing the Rust style guides found: 
 // https://doc.rust-lang.org/nightly/style-guide/index.html
 
-const unsigned long MAX_UNSIGNED_LONG = 4294967295UL;
-const unsigned long CHANGE_STATE_INTERVAL = 250; // 0.25 of a second to register should change
-const int HIGH_THREASHOLD = 500;
+#include <Arduino.h>
+#include <Servo.h>
 
-// Enums and Structs
+// --- Constants ---
+const int servoPin = 3;
 
-enum DebounceState {
-  Low,
-  PossibleHigh,
-  High,
-  PossibleLow
+// --- Enums ---
+/// State of the goal of the hand
+enum EmgState {
+  Relaxed,
+  Intermediate,
+  Clenched
 };
 
-struct ChangeAble {
-  bool can_change;
-  unsigned long last_time;
-};
+/// "Random" (psudo) number generator
+struct RNG {
 
-struct Debouncer {
-  DebounceState state;
-  ChangeAble change;
-  uint8_t pin; // store the pin here so we don't have to pass it around all over the place.
-};
+  private:
+    /// storage for the random number genorator
+    uint32_t value;
 
-// Default Constructors (Rust-style naming)
-
-/// The default state is Low, should be a trait but that is a rust thing
-DebounceState default_debounce_state() {
-  return DebounceState::Low;
-}
-
-/// creates a ChangeAble Object from the current time according to the board
-ChangeAble default_change_able() {
-  return ChangeAble {
-    true,
-    millis() // using millis here so we can call default without needing another constructor
-  };
-}
-
-/// creates a new Debouncer object from a given pin
-Debouncer new_debouncer(uint8_t pin) {
-  return Debouncer {
-    default_debounce_state(),
-    default_change_able(),
-    pin
-  };
-}
-
-// Logic
-
-/// Returns true if High or Possible Low and updates the timeline base on the State
-/// We only need to use the can_change for the Possible states because that allows more control
-/// over when to stop the state
-bool is_high(Debouncer debouncer) {
-  int current_input = analogRead(debouncer.pin);
-  Serial.print(current_input);
-  Serial.print(",");
-  if (current_input > 155) {
-    current_input = HIGH;
-  } else {
-    current_input = LOW;
-  }
-
-  switch (debouncer.state) {
-    case Low:
-      if (current_input == HIGH) { // the current reading is high
-         debouncer.change = default_change_able();
-         debouncer.state = PossibleHigh;
-      }
-      return false;
-    case PossibleHigh:
-      if (current_input == HIGH && can_change(debouncer.change, CHANGE_STATE_INTERVAL)) {
-        debouncer.state = High;
-        debouncer.change = default_change_able();
-        return true;
-      } else if (current_input == LOW) {
-        debouncer.state = Low;
-        debouncer.change = default_change_able();
-      }
-      return false;
-    case High:
-      if (current_input == Low) {
-        debouncer.change = default_change_able();
-        debouncer.state = PossibleLow;
-      }
-      return true;
-    case PossibleLow:
-      if (current_input == LOW && can_change(debouncer.change, CHANGE_STATE_INTERVAL)) {
-        debouncer.change = default_change_able();
-        debouncer.state = Low;
-        return false;
-      } else if (current_input == HIGH) {
-        debouncer.state = High;
-        debouncer.change = default_change_able();
-      }
-      return true;
-  }
-  printf("%i] got to unreachable area and isn't signal high!");
-  return false; // something really bad happened if we go here!
-}
-
-/// Returns true if enough time has elapsed for use to update the State
-/// Handles an overflow for millis
-bool can_change(ChangeAble c, unsigned long interval_milli_seconds) {
-  if (c.can_change) {
-    return true;
-  }
-
-  unsigned long current_time = millis();
-  if (current_time < c.last_time) {
-    // millis() overflowed
-    unsigned long total_time = MAX_UNSIGNED_LONG;
-    unsigned long diffrence = total_time - c.last_time;
-    unsigned long current_total_time = diffrence + current_time;
-    if (current_total_time > interval_milli_seconds) {
-      c.can_change = true;
-      return true;
+  public:
+    /// Construct the Random Number Generator
+    RNG(uint32_t seed) {
+      value = seed;
     }
 
-  } else if (current_time - c.last_time >= interval_milli_seconds) {
-    c.can_change = true;
-    return true;
-  }
+    /// Advance RNG state and return new value
+    uint32_t next() {
 
-  return false;
+      value = value * 0x6C8E9CF5UL;
+      value ^= value >> 13;
+      value = value + 0xB5297A4DUL;
+      value ^= value << 17;
+      value = value - 0xD6E8FEB8UL;
+      value ^= value >> 5;
+      return value;
+    }
+
+    /// Return bounded random number [0, bound)
+    uint32_t next_bounded(uint32_t bound) {
+      return next() % bound;
+    }
+};
+
+/// Electromyography Simulator 
+struct EMGSimulator {
+
+  private:
+    /// how many times updated, also changes the state
+    uint32_t step_count = 0;
+    /// current goal of the hand
+    EmgState emg_state = Relaxed;
+    /// for making harsh above and below the line
+    uint16_t phase = 0;
+    /// How large the spike is
+    uint8_t spike_remaining = 0;
+    /// The Random Number Geneator
+    RNG number_generator;
+
+  public:
+    EMGSimulator(RNG generator) : number_generator(generator) {}
+
+    /// Get the next EMG value
+    uint16_t next() {
+      uint16_t noise = number_generator.next_bounded(1024);
+
+      step_count++;
+      phase += 17;
+
+      if ((step_count % 1000) == 0) {
+        uint16_t r = noise % 100;
+        if (r < 50) emg_state = Relaxed;
+        else if (r < 80) emg_state = Intermediate;
+        else emg_state = Clenched;
+      }
+
+      if (spike_remaining == 0 && (noise % 200) == 0) {
+        spike_remaining = (noise % 5) + 1;
+      }
+
+      if (spike_remaining > 0) {
+        spike_remaining--;
+        return 1023;
+      }
+
+      uint16_t baseline = 0;
+      uint16_t amplitude = 0;
+
+      switch (emg_state) {
+        case Relaxed: baseline = 200; amplitude = 50; break;
+        case Intermediate: baseline = 620; amplitude = 30; break;
+        case Clenched: baseline = 940; amplitude = 10; break;
+      }
+
+      int16_t jitter = ((noise % (2 * amplitude)) - amplitude);
+      int16_t artifact = ((phase % 256) < 128) ? 3 : -3;
+      int16_t signal = baseline + jitter + artifact;
+
+      if (signal < 0) signal = 0;
+      if (signal > 1023) signal = 1023;
+
+      return (uint16_t)signal;
+    }
+};
+
+/// Smoothing for a chaotic system
+struct ExponentalMovingAverage {
+  private:
+    float ema = 0.0;
+    float alpha;
+    float last_input = 0.0;
+
+  public:
+    /// EMA Constructor
+    ExponentalMovingAverage(float alpha) {
+      this->alpha = alpha;
+    }
+
+    /// Get next smoothed value based on the last average
+    uint16_t update(uint16_t input) {
+      float input_f = (float)input;
+      float max_slope = abs(last_input - ema);
+
+      float go_to = alpha * input_f + (1.0f - alpha) * ema;
+      float slope = go_to - ema;
+
+      if (slope > max_slope) slope = max_slope;
+      else if (slope < -max_slope) slope = -max_slope;
+
+      ema += slope;
+      last_input = input_f;
+
+      return (uint16_t)ema;
+    }
+};
+
+// --- Globals for EMG Simulator ---
+EMGSimulator emg_simulator = EMGSimulator(RNG(42));
+ExponentalMovingAverage ema = ExponentalMovingAverage(0.15);
+
+// Servo object
+Servo finger;
+
+// --- Functions ---
+
+/// Convert 0-1023 to 0-90 degrees
+uint16_t from_1023_to_90(uint16_t number) {
+  return (uint16_t)(((uint32_t)number * 90) / 1023);
 }
 
-// Pins (Reading from EMG's incase anyone reading this forgot)
-
-uint8_t refrence_pin = 14; // temp value for now
-uint8_t bend_pin = 17;     // temp value for now
-uint8_t unbend_pin = 16;   // temp value for now
-
-// debouncers based on the pins
-Debouncer bend_pin_debouncer = new_debouncer(bend_pin);
-Debouncer unbend_pin_debouncer = new_debouncer(unbend_pin);
-
-// Setup & Loop
-
 void setup() {
-  pinMode(refrence_pin, INPUT);
-  pinMode(bend_pin, INPUT);
-  pinMode(unbend_pin, INPUT);
+  Serial.begin(57600);
+  finger.attach(servoPin);
 
-  // for testing
-  pinMode(13, OUTPUT);
-  Serial.begin(9600);
+  // Calibration: hold servo at 0 degrees for ~5 seconds
+  for (int i = 0; i <= 90; i++) {
+    finger.write(0);
+    delay(55);
+  }
 }
 
 void loop() {
-  bool finger_should_bend = is_high(bend_pin_debouncer);
-  Serial.println(finger_should_bend);
-  // bool finger_should_extend = is_high(unbend_pin_debouncer);
-  if (finger_should_bend) {
-    digitalWrite(13, HIGH);
-  } else {
-    digitalWrite(13, LOW);
-  }
+  uint16_t raw = emg_simulator.next();
+  uint16_t smoothed = ema.update(raw);
+
+  uint16_t motor_out = from_1023_to_90(smoothed);
+  finger.write(motor_out);
+
+  Serial.print("raw:");
+  Serial.print(raw);
+  Serial.print(", smoothed:");
+  Serial.print(smoothed);
+  Serial.print(", motor:");
+  Serial.println(motor_out);
 }
