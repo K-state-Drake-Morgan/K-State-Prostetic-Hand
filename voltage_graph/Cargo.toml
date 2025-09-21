@@ -1,0 +1,14 @@
+[package]
+name = "voltage_graph"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+color-eyre = "0.6.5"
+eframe = "0.32.3"
+egui-plotter = "0.6.0"
+egui_extras = "0.32.3"
+env_logger = "0.11.8"
+log = "0.4.28"
+plotters = "0.3.7"
+serde = { version = "1.0.221", features = ["serde_derive"] }
