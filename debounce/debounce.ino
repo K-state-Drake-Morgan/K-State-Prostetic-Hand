@@ -155,6 +155,7 @@ uint16_t from_1023_to_90(uint16_t number) {
 void setup() {
   Serial.begin(57600);
   finger.attach(servoPin);
+  pinMode(A0, INPUT);
 
   // Calibration: hold servo at 0 degrees for ~5 seconds
   for (int i = 0; i <= 90; i++) {
@@ -164,7 +165,7 @@ void setup() {
 }
 
 void loop() {
-  uint16_t raw = emg_simulator.next();
+  uint16_t raw = analogRead(A0);
   uint16_t smoothed = ema.update(raw);
 
   uint16_t motor_out = from_1023_to_90(smoothed);
