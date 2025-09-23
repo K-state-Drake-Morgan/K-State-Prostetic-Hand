@@ -1,3 +1,2 @@
-debouncer_rust/target
-voltage_graph/target
+**/target/
 Cargo.lock
