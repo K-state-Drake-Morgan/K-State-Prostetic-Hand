@@ -153,7 +153,7 @@ uint16_t from_1023_to_90(uint16_t number) {
 }
 
 void setup() {
-  Serial.begin(57600);
+  Serial.begin(9600);
   finger.attach(servoPin);
   pinMode(A0, INPUT);
 
