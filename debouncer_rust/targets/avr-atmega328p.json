@@ -1,0 +1,17 @@
+{
+  "llvm-target": "avr-unknown-gnu-atmega328",
+  "data-layout": "e-m:e-p:8:8-i8:8:8-i16:8:8-i32:8:8-i64:8:8-f32:8:8-f64:8:8-n8:16:32",
+  "arch": "avr",
+  "os": "none",
+  "env": "",
+  "vendor": "",
+  "linker-flavor": "gcc",
+  "linker": "avr-gcc",
+  "target-c-int-width": "16",
+  "max-atomic-width": 8,
+  "panic-strategy": "abort",
+  "executables": true,
+  "disable-redzone": true,
+  "features": "+avr5",
+  "relocation-model": "static"
+}
