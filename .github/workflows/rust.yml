@@ -19,7 +19,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig1-dev pkg-config
+          sudo apt-get install -y libfontconfig1-dev pkg-config gcc-avr avr-libc
 
       - name: Install nightly Rust
         uses: actions-rs/toolchain@v1
@@ -27,9 +27,6 @@ jobs:
           toolchain: nightly
           override: true
           components: rust-src
-
-      - name: Add AVR target
-        run: rustup target add avr-atmega328p
 
       # ---- Desktop crate ----
       - name: Build voltage_graph
@@ -39,6 +36,7 @@ jobs:
         run: cargo test -p voltage_graph --verbose
 
       # ---- Embedded crate ----
+
       - name: Build debouncer_rust (AVR)
         run: |
           cargo build \
