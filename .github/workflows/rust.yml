@@ -34,7 +34,7 @@ jobs:
         run: |
           cargo build \
             -p debouncer_rust \
-            --target targets/avr-atmega328p.json \
+            --target debouncer_rust/targets/avr-atmega328p.json \
             -Z build-std=core \
             -Z build-std-features=panic_immediate_abort
 
