@@ -4,7 +4,7 @@
   "arch": "avr",
   "os": "none",
   "env": "",
-  "vendor": "",
+  "vendor": "unknown",
   "linker-flavor": "gcc",
   "linker": "avr-gcc",
   "target-c-int-width": 16,
