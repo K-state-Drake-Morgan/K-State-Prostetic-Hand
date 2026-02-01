@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Install system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y libfontconfig1-dev pkg-config
@@ -28,8 +28,21 @@ jobs:
           override: true
           components: rust-src
 
-      - name: Build Rust workspace
-        run: cargo build --workspace --verbose
+      - name: Add AVR target
+        run: rustup target add avr-atmega328p
 
-      - name: Test Rust workspace
-        run: cargo test --workspace --verbose
+      # ---- Desktop crate ----
+      - name: Build voltage_graph
+        run: cargo build -p voltage_graph --verbose
+
+      - name: Test voltage_graph
+        run: cargo test -p voltage_graph --verbose
+
+      # ---- Embedded crate ----
+      - name: Build debouncer_rust (AVR)
+        run: |
+          cargo build \
+            -p debouncer_rust \
+            --target avr-atmega328p \
+            -Z build-std=core \
+            -Z build-std-features=panic_immediate_abort
