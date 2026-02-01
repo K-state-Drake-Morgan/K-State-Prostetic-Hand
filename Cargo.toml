@@ -1,6 +1,6 @@
 
 [workspace]
 members = [
-    "debouncer_rust",
+    # "debouncer_rust",
     "voltage_graph"
 ]

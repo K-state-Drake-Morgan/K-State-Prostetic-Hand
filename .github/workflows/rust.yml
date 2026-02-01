@@ -28,15 +28,15 @@ jobs:
           override: true
           components: rust-src
 
-      # ---- Embedded crate ----
+      # # ---- Embedded crate ----
 
-      - name: Build debouncer_rust (AVR)
-        run: |
-          cargo build \
-            -p debouncer_rust \
-            --target debouncer_rust/targets/avr-atmega328p.json \
-            -Z build-std=core \
-            -Z build-std-features=panic_immediate_abort
+      # - name: Build debouncer_rust (AVR)
+      #   run: |
+      #     cargo build \
+      #       -p debouncer_rust \
+      #       --target debouncer_rust/targets/avr-atmega328p.json \
+      #       -Z build-std=core \
+      #       -Z build-std-features=panic_immediate_abort
 
       # ---- Desktop crate ----
       - name: Build voltage_graph
