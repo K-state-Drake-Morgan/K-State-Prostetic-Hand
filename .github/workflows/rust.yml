@@ -28,19 +28,19 @@ jobs:
           override: true
           components: rust-src
 
-      # ---- Desktop crate ----
-      - name: Build voltage_graph
-        run: cargo build -p voltage_graph --verbose
-
-      - name: Test voltage_graph
-        run: cargo test -p voltage_graph --verbose
-
       # ---- Embedded crate ----
 
       - name: Build debouncer_rust (AVR)
         run: |
           cargo build \
             -p debouncer_rust \
-            --target avr-atmega328p.json \
+            --target targets/avr-atmega328p.json \
             -Z build-std=core \
             -Z build-std-features=panic_immediate_abort
+
+      # ---- Desktop crate ----
+      - name: Build voltage_graph
+        run: cargo build -p voltage_graph --verbose
+
+      - name: Test voltage_graph
+        run: cargo test -p voltage_graph --verbose
