@@ -19,7 +19,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig1-dev pkg-config gcc-avr avr-libc
+          sudo apt-get install -y libfontconfig1-dev pkg-config gcc-avr avr-libc avrdude
 
       - name: Install nightly Rust
         uses: actions-rs/toolchain@v1
@@ -41,6 +41,6 @@ jobs:
         run: |
           cargo build \
             -p debouncer_rust \
-            --target avr-atmega328p \
+            --target avr-atmega328p.json \
             -Z build-std=core \
             -Z build-std-features=panic_immediate_abort
