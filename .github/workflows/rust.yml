@@ -14,12 +14,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libfontconfig1-dev pkg-config
-      - uses: actions/checkout@v4
-      - name: Build
+
+      - name: Install nightly Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+          components: rust-src
+
+      - name: Build Rust workspace
         run: cargo build --workspace --verbose
-      - name: Run tests
+
+      - name: Test Rust workspace
         run: cargo test --workspace --verbose
