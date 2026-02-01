@@ -8,6 +8,7 @@
   "linker-flavor": "gcc",
   "linker": "avr-gcc",
   "target-c-int-width": 16,
+  "target-pointer-width": 16,
   "max-atomic-width": 8,
   "panic-strategy": "abort",
   "executables": true,
