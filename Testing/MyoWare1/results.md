@@ -21,3 +21,7 @@ Using debounce arduino code
 Stuck below 500 and above 470 with random variations
 
 Does nothing when clenching
+
+# 02-02-2026
+
+Tried all programs on both MyoWare Sensors, nothing worked... please send help!
